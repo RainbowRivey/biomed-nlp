@@ -1,27 +1,64 @@
-# %% Imports
+#%%
+import argparse
+
+parser = argparse.ArgumentParser(description="Train")
+parser.add_argument("dataset", type=str)
+parser.add_argument("epochs", type=int)
+args = parser.parse_args()
+
+
+#%% To start in interactive mode without argparse
+class args:
+    ...
+args.dataset = "SETH"
+args.epochs = 5
+#%%
 from seqeval.metrics import classification_report
 import numpy as np
 import pandas as pd
 from datasets import Dataset, DatasetDict, load_metric
-from transformers import AutoTokenizer, AutoModelForTokenClassification, TrainingArguments, Trainer,  DataCollatorForTokenClassification
+from transformers import AutoTokenizer, AutoModelForTokenClassification, TrainingArguments, Trainer,  DataCollatorForTokenClassification, get_scheduler
 import evaluate
 import time
 import itertools
-import evaluate
 import datetime
+import json
 import torch
+from tqdm.auto import tqdm
+from numpyencoder import NumpyEncoder
+from torch.utils.data import DataLoader
+from torch.optim import AdamW
+from accelerate import Accelerator
+from sklearn.model_selection import train_test_split
 
 
-# %%
+#%%
 modelCheckpoint = "microsoft/BiomedNLP-BiomedBERT-base-uncased-abstract"
-outputModel = "./seth-finetune"
-dataset = "amia"
+dataset = args.dataset # SETH tmvar Variome Variome120 amia
+path = f"./_{dataset}-custom"
 tokenizer = AutoTokenizer.from_pretrained(modelCheckpoint)
 data_collator = DataCollatorForTokenClassification(tokenizer=tokenizer)
 seqeval = evaluate.load("seqeval")
-######################################
-# %% Read IOB
 
+training_args = TrainingArguments(
+    output_dir=path,
+    learning_rate=2e-5,
+    per_device_train_batch_size=16,
+    per_device_eval_batch_size=16,
+    num_train_epochs=args.epochs,
+    weight_decay=0.01,
+    save_total_limit=3,
+    evaluation_strategy="epoch",
+    save_strategy="epoch",
+    load_best_model_at_end=True,
+    push_to_hub=False,
+    optim="adamw_torch"
+)
+
+
+######################################
+#  Read IOB
+#%%
 
 def convertToCorpus(inputString):
     documents = []
@@ -44,23 +81,39 @@ def convertToCorpus(inputString):
     return documents
 
 
-with open(f"./IOB/{dataset}-train.iob", "r") as train:
-    trainFile = train.read().split('\n')
-    trainFile.pop(0)
-    trainCorpus = convertToCorpus(trainFile)
-with open(f"./IOB/{dataset}-test.iob", "r") as test:
-    testFile = test.read().split('\n')
-    testFile.pop(0)
-    testCorpus = convertToCorpus(testFile)
+print("Loading datasets")
+# for local copies
+# with open(f"./IOB/{dataset}-train.iob", "r") as train:
+#     trainFile = train.read().split('\n')
+#     trainFile.pop(0)
+#     trainCorpus = convertToCorpus(trainFile)
+# with open(f"./IOB/{dataset}-test.iob", "r") as test:
+#     testFile = test.read().split('\n')
+#     testFile.pop(0)
+#     testCorpus = convertToCorpus(testFile)
 
+import requests
+f = requests.get(f"https://raw.githubusercontent.com/Erechtheus/mutationCorpora/master/corpora/IOB/{dataset}-train.iob")
+trainFile = f.text.split("\n")
+trainFile.pop(0) #Remove first element
+trainCorpus = convertToCorpus(trainFile)
+f = requests.get(f"https://raw.githubusercontent.com/Erechtheus/mutationCorpora/master/corpora/IOB/{dataset}-test.iob")
+testFile = f.text.split("\n")
+testFile.pop(0) #Remove first element
+testCorpus = convertToCorpus(testFile)
+del(testFile, trainFile)
+val = int(len(trainCorpus)*0.9)
+trainCorpus, validationCorpus = trainCorpus[:val], trainCorpus[val:]
+validationCorpus
+#%%
 
-# %%
 label_list = sorted(list(
     set(list(itertools.chain(*list(map(lambda x: x["str_tags"], trainCorpus)))))))
 label2id = dict(zip(label_list, range(len(label_list))))
 id2label = {v: k for k, v in label2id.items()}
 
 
+#%% Defs
 def align_labels_with_tokens(labels, word_ids, id2label=id2label, label2id=label2id):
     new_labels = []
     current_word = None
@@ -120,8 +173,7 @@ def compute_metrics(p):
         "accuracy": results["overall_accuracy"],
     }
 
-
-# %%
+#%%
 for document in trainCorpus:
     document["ner_tags"] = list(
         map(lambda x: label2id[x], document["str_tags"]))
@@ -129,102 +181,145 @@ for document in trainCorpus:
 for document in testCorpus:
     document["ner_tags"] = list(
         map(lambda x: label2id[x], document["str_tags"]))
-# %%
+    
+
 fullData = DatasetDict({
-    'train': Dataset.from_pandas(pd.DataFrame(data=trainCorpus)),
-    'test': Dataset.from_pandas(pd.DataFrame(data=testCorpus))
+    'train': Dataset.from_pandas(trainCorpus),
+    'validation': Dataset.from_pandas(validationCorpus),
+    'test': Dataset.from_pandas(testCorpus)
 })
 
-# %% Test
-###############################
-document = fullData["train"][0]
 
-tokenized_input = tokenizer(document["tokens"], is_split_into_words=True)
-labels = document["ner_tags"]
-
-tokens = tokenizer.convert_ids_to_tokens(tokenized_input["input_ids"])
-# print("Original-sentence:\t\t" +" ".join(document['tokens']))
-# print("Transformer representation:\t" +" ".join(tokens))
-
-word_ids = tokenized_input.word_ids()
-# print(labels)
-# print(align_labels_with_tokens(labels, word_ids))
-# TODO Add here code to show how result would look like
-
-
-# %%
+#
 tokenized_datasets = fullData.map(
     tokenize_and_align_labels,
     batched=True
 )
 
-# %% Load clear model
+
+
+# Load clear model
+print("Loading base model")
 model = AutoModelForTokenClassification.from_pretrained(
     modelCheckpoint, num_labels=len(id2label), id2label=id2label, label2id=label2id)
-#%% OR load from checkpoint
-model = AutoModelForTokenClassification.from_pretrained(
-    outputModel, num_labels=len(id2label), id2label=id2label, label2id=label2id)
-# %% TRAIN
-training_args = TrainingArguments(
-    output_dir=outputModel,
-    learning_rate=2e-5,
-    per_device_train_batch_size=16,
-    per_device_eval_batch_size=16,
-    num_train_epochs=1,
-    weight_decay=0.01,
-    save_total_limit=3,
-    evaluation_strategy="epoch",
-    save_strategy="epoch",
-    load_best_model_at_end=True,
-    push_to_hub=False,
-)
-
-trainer = Trainer(
-    model=model,
-    args=training_args,
-    train_dataset=tokenized_datasets["train"],
-    eval_dataset=tokenized_datasets["test"],
-    tokenizer=tokenizer,
-    data_collator=data_collator,
-    compute_metrics=compute_metrics,
-)
-
-# %%
-start = time.time()
-trainer.train()
-print("Finished after " + str(datetime.timedelta(seconds=round(time.time() - start))))
+# OR load from checkpoint
+# model = AutoModelForTokenClassification.from_pretrained(
+#     outputModel, num_labels=len(id2label), id2label=id2label, label2id=label2id)
 
 
-
-# %%
-pd.DataFrame(trainer.state.log_history).head(5)
-df = pd.DataFrame(trainer.state.log_history)
-df = df[df.eval_runtime.notnull()]
-df.plot(x='epoch', y=['eval_loss'], kind='bar')
-df.plot(x='epoch', y=['eval_precision', 'eval_recall',
-        'eval_f1'], kind='bar', figsize=(15, 9))
-
-
-# #%% TEST
-# text = "Identification of four novel mutations in the factor VIII gene: three missense mutations (E1875G, G2088S, I2185T) and a 2-bp deletion (1780delTC)."
-# inputs = tokenizer(text, return_tensors="pt")
-# print(inputs)
-# inputs.to(0)
-# with torch.no_grad():
-#   logits = model(**inputs).logits
-#   # print(logits)
-
-# predictions = torch.argmax(logits, dim=2)
-# predicted_token_class = [model.config.id2label[t.item()] for t in predictions[0]]
-# for token, label in zip(tokenizer.convert_ids_to_tokens(inputs['input_ids'][0]), predicted_token_class):
-#     print(token, label)
-
-# # from transformers import pipeline
-# # clf = pipeline("token-classification", model, tokenizer=tokenizer, device=0)
-# # answer = clf(text)
-# # print(answer)
+#========================Custom training loop====================#
 
 #%%
+train_dataloader = DataLoader(
+    tokenized_datasets["train"],
+    shuffle=True,
+    collate_fn=data_collator,
+    batch_size=8,
+)
+eval_dataloader = DataLoader(
+    tokenized_datasets["validation"], collate_fn=data_collator, batch_size=8
+)
+## optimizer & accelerator
+optimizer = AdamW(model.parameters(), lr=2e-5)
+
+accelerator = Accelerator()
+model, optimizer, train_dataloader, eval_dataloader = accelerator.prepare(
+    model, optimizer, train_dataloader, eval_dataloader
+)
+
+## scheduler 
+num_train_epochs = 3
+num_update_steps_per_epoch = len(train_dataloader)
+num_training_steps = num_train_epochs * num_update_steps_per_epoch
+
+lr_scheduler = get_scheduler(
+    "linear",
+    optimizer=optimizer,
+    num_warmup_steps=0,
+    num_training_steps=num_training_steps,
+)
+progress_bar = tqdm(range(num_training_steps))
+
+for epoch in range(num_train_epochs):
+    # Training
+    model.train()
+    for batch in train_dataloader:
+        outputs = model(**batch)
+        loss = outputs.loss
+        accelerator.backward(loss)
+
+        optimizer.step()
+        lr_scheduler.step()
+        optimizer.zero_grad()
+        progress_bar.update(1)
+
+    # Evaluation
+    model.eval()
+    for batch in eval_dataloader:
+        with torch.no_grad():
+            outputs = model(**batch)
+
+        predictions = outputs.logits.argmax(dim=-1)
+        labels = batch["labels"]
+
+        # Necessary to pad predictions and labels for being gathered
+        predictions = accelerator.pad_across_processes(predictions, dim=1, pad_index=-100)
+        labels = accelerator.pad_across_processes(labels, dim=1, pad_index=-100)
+
+        predictions_gathered = accelerator.gather(predictions)
+        labels_gathered = accelerator.gather(labels)
+
+        # true_predictions, true_labels = postprocess(predictions_gathered, labels_gathered)
+        true_predictions = [
+            [label_list[p] for (p, l) in zip(prediction, label) if l != -100]
+            for prediction, label in zip(predictions_gathered, labels_gathered)
+        ]
+        true_labels = [
+            [label_list[l] for (p, l) in zip(prediction, label) if l != -100]
+            for prediction, label in zip(predictions_gathered, labels_gathered)
+        ]
+
+    results = compute_metrics(true_predictions, true_labels)
+    print(
+        f"epoch {epoch}:",
+        {
+            key: results[f"overall_{key}"]
+            for key in ["precision", "recall", "f1", "accuracy"]
+        },
+    )
+#======================Default training loop========================#
+#%%
+# trainer = Trainer(
+#     model=model,
+#     args=training_args,
+#     train_dataset=tokenized_datasets["train"],
+#     eval_dataset=tokenized_datasets["test"],
+#     tokenizer=tokenizer,
+#     data_collator=data_collator,
+#     compute_metrics=compute_metrics,
+# )
+
+# print("Start training")
+# start = time.time()
+# trainer.train()
+# print("Finished after " + str(datetime.timedelta(seconds=round(time.time() - start))))
+
+# trainer.save_model(f"{path}/final")
+
+#========================Post-process===============================#
+#%%
+df = pd.DataFrame(trainer.state.log_history)
+df.to_json(f"{path}/log_history.json")
+
+df = df[df.eval_runtime.notnull()]
+loss_fig = df.plot(x='epoch', y=['eval_loss'], kind='bar', title = f'{dataset} loss')
+loss_fig.figure.savefig(f'{path}/loss.png')
+
+eval_fig = df.plot(x='epoch', y=['eval_precision', 'eval_recall',
+                                 'eval_f1'], kind='bar', figsize=(15, 9), title = f'{dataset} eval')
+eval_fig.figure.savefig(f'{path}/eval.png')
+
+
 predictions, labels, _ = trainer.predict(tokenized_datasets["test"])
 predictions = np.argmax(predictions, axis=2)
 
@@ -240,8 +335,6 @@ true_labels = [
 
 results = seqeval.compute(predictions=true_predictions, references=true_labels)
 results
-# %%
 
-
-trainer.save_model("seth-finetune-4ep")
-# %%
+with open(f"{path}/perfomance.json", "w") as f:
+  json.dump(results, f, cls=NumpyEncoder)
