@@ -1,7 +1,11 @@
 datasets==2.12.0
 evaluate==0.4.0
 numpy==1.24.2
-numpyencoder=0.3.0
+numpyencoder==0.3.0
 pandas==1.5.3
+Requests==2.31.0
+seqeval==1.2.2
+torch==2.0.1
+tqdm==4.65.0
 transformers[torch]==4.32.1
 tensorflow==2.15.0
