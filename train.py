@@ -37,6 +37,41 @@ wandb.login(key=WANDB_API_KEY)
 modelCheckpoint = "microsoft/BiomedNLP-BiomedBERT-base-uncased-abstract"
 dataset = args.dataset
 path = f"./_{dataset}"
+
+
+# # 1: Define objective/training function
+# def objective(config):
+#     score = config.x**3 + config.y
+#     return score
+
+# def main():
+#     wandb.init(project=f"biomed-{dataset}")
+#     score = objective(wandb.config)
+#     wandb.log({"score": score})
+
+# # 2: Define the search space
+# sweep_configuration = {
+#     "method": "random",
+#     "metric": {"goal": "maximize", "name": "score"},
+#     "parameters": {
+#         "x": {"max": 0.1, "min": 0.01},
+#         "y": {"values": [1, 3, 7]},
+#     },
+# }
+
+# # 3: Start the sweep
+# sweep_id = wandb.sweep(sweep=sweep_configuration, project="my-first-sweep")
+
+# wandb.agent(sweep_id, function=main, count=10)
+
+
+
+
+
+
+
+
+
 tokenizer = AutoTokenizer.from_pretrained(modelCheckpoint)
 data_collator = DataCollatorForTokenClassification(tokenizer=tokenizer)
 seqeval = evaluate.load("seqeval")
@@ -207,88 +242,63 @@ tokenized_datasets = fullData.map(
     tokenize_and_align_labels,
     batched=True
 )
-def train():
-    # Load clear model
-    print("Loading base model")
-    model = AutoModelForTokenClassification.from_pretrained(
-        modelCheckpoint, num_labels=len(id2label), id2label=id2label, label2id=label2id, ignore_mismatched_sizes=True)
-    # OR load from checkpoint
-    # model = AutoModelForTokenClassification.from_pretrained(
-    #     outputModel, num_labels=len(id2label), id2label=id2label, label2id=label2id)
-    #  TRAIN
 
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=tokenized_datasets["train"],
-        eval_dataset=tokenized_datasets["test"],
-        tokenizer=tokenizer,
-        data_collator=data_collator,
-        compute_metrics=compute_metrics,
-    )
+# Load clear model
+print("Loading base model")
+model = AutoModelForTokenClassification.from_pretrained(
+    modelCheckpoint, num_labels=len(id2label), id2label=id2label, label2id=label2id, ignore_mismatched_sizes=True)
+# OR load from checkpoint
+# model = AutoModelForTokenClassification.from_pretrained(
+#     outputModel, num_labels=len(id2label), id2label=id2label, label2id=label2id)
+#  TRAIN
 
-    #
-    print("Start training")
-    start = time.time()
-    trainer.train()
-    print("Finished after " + str(datetime.timedelta(seconds=round(time.time() - start))))
+trainer = Trainer(
+    model=model,
+    args=training_args,
+    train_dataset=tokenized_datasets["train"],
+    eval_dataset=tokenized_datasets["test"],
+    tokenizer=tokenizer,
+    data_collator=data_collator,
+    compute_metrics=compute_metrics,
+)
 
-    trainer.save_model(f"{path}/final")
+#
+print("Start training")
+start = time.time()
+trainer.train()
+print("Finished after " + str(datetime.timedelta(seconds=round(time.time() - start))))
 
-    #========================Post-process===============================#
+trainer.save_model(f"{path}/final")
 
-    df = pd.DataFrame(trainer.state.log_history)
-    df.to_json(f"{path}/log_history.json")
+#========================Post-process===============================#
 
-    df = df[df.eval_runtime.notnull()]
-    loss_fig = df.plot(x='epoch', y=['eval_loss'], kind='bar', title = f'{dataset} loss')
-    loss_fig.figure.savefig(f'{path}/loss.png')
+df = pd.DataFrame(trainer.state.log_history)
+df.to_json(f"{path}/log_history.json")
 
-    eval_fig = df.plot(x='epoch', y=['eval_precision', 'eval_recall',
-                                    'eval_f1'], kind='bar', figsize=(15, 9), title = f'{dataset} eval')
-    eval_fig.figure.savefig(f'{path}/eval.png')
+df = df[df.eval_runtime.notnull()]
+loss_fig = df.plot(x='epoch', y=['eval_loss'], kind='bar', title = f'{dataset} loss')
+loss_fig.figure.savefig(f'{path}/loss.png')
+
+eval_fig = df.plot(x='epoch', y=['eval_precision', 'eval_recall',
+                                 'eval_f1'], kind='bar', figsize=(15, 9), title = f'{dataset} eval')
+eval_fig.figure.savefig(f'{path}/eval.png')
 
 
-    predictions, labels, _ = trainer.predict(tokenized_datasets["test"])
-    predictions = np.argmax(predictions, axis=2)
+predictions, labels, _ = trainer.predict(tokenized_datasets["test"])
+predictions = np.argmax(predictions, axis=2)
 
-    # Remove ignored index (special tokens)
-    true_predictions = [
-        [label_list[p] for (p, l) in zip(prediction, label) if l != -100]
-        for prediction, label in zip(predictions, labels)
-    ]
-    true_labels = [
-        [label_list[l] for (p, l) in zip(prediction, label) if l != -100]
-        for prediction, label in zip(predictions, labels)
-    ]
+# Remove ignored index (special tokens)
+true_predictions = [
+    [label_list[p] for (p, l) in zip(prediction, label) if l != -100]
+    for prediction, label in zip(predictions, labels)
+]
+true_labels = [
+    [label_list[l] for (p, l) in zip(prediction, label) if l != -100]
+    for prediction, label in zip(predictions, labels)
+]
 
-    results = seqeval.compute(predictions=true_predictions, references=true_labels)
-    results
+results = seqeval.compute(predictions=true_predictions, references=true_labels)
+results
 
-    with open(f"{path}/perfomance.json", "w") as f:
-        json.dump(results, f, cls=NumpyEncoder)
-    return results
-# 1: Define objective/training function
-def objective(config):
-    score = config.x**3 + config.y
-    return score
-
-def main():
-    wandb.init(project=f"biomed-{dataset}")
-    score = train(wandb.config)
-    wandb.log({"score": score})
-
-# 2: Define the search space
-sweep_configuration = {
-    "method": "random",
-    "metric": {"goal": "minimize", "name": "loss"},
-    "parameters": {
-        "x": {"max": 0.1, "min": 0.01},
-        "y": {"values": [1, 3, 7]},
-    },
-}
-
-# 3: Start the sweep
-sweep_id = wandb.sweep(sweep=sweep_configuration, project="s")
-
-wandb.agent(sweep_id, function=main, count=10)
+with open(f"{path}/perfomance.json", "w") as f:
+  json.dump(results, f, cls=NumpyEncoder)
