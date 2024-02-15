@@ -9,8 +9,8 @@ args = parser.parse_args()
 # #%% To start in interactive mode without argparse
 # class args:
 #     ...
-# args.dataset = "tmvar"
-# args.epochs = 1
+# args.dataset = "SETH"
+# args.epochs = 5
 
 from seqeval.metrics import classification_report
 import numpy as np
@@ -24,9 +24,14 @@ import datetime
 import json
 from tqdm.auto import tqdm
 from numpyencoder import NumpyEncoder
+import wandb
 
 
-modelCheckpoint = "microsoft/BiomedNLP-BiomedBERT-base-uncased-abstract"
+with open('wandb.key', 'r') as keyFile:
+    WANDB_API_KEY = keyFile.readline().rstrip()
+wandb.login(key=WANDB_API_KEY)
+
+modelCheckpoint = "microsoft/BiomedNLP-BiomedBERT-base-uncased-abstract-fulltext"
 dataset = args.dataset
 path = f"./_{dataset}"
 tokenizer = AutoTokenizer.from_pretrained(modelCheckpoint)
@@ -185,7 +190,7 @@ tokenized_datasets = fullData.map(
 # Load clear model
 print("Loading base model")
 model = AutoModelForTokenClassification.from_pretrained(
-    modelCheckpoint, num_labels=len(id2label), id2label=id2label, label2id=label2id)
+    modelCheckpoint, num_labels=len(id2label), id2label=id2label, label2id=label2id, ignore_mismatched_sizes=True)
 # OR load from checkpoint
 # model = AutoModelForTokenClassification.from_pretrained(
 #     outputModel, num_labels=len(id2label), id2label=id2label, label2id=label2id)
@@ -215,11 +220,11 @@ df = pd.DataFrame(trainer.state.log_history)
 df.to_json(f"{path}/log_history.json")
 
 df = df[df.eval_runtime.notnull()]
-loss_fig = df.plot(x='epoch', y=['eval_loss'], kind='bar')
+loss_fig = df.plot(x='epoch', y=['eval_loss'], kind='bar', title = f'{dataset} loss')
 loss_fig.figure.savefig(f'{path}/loss.png')
 
 eval_fig = df.plot(x='epoch', y=['eval_precision', 'eval_recall',
-                                 'eval_f1'], kind='bar', figsize=(15, 9))
+                                 'eval_f1'], kind='bar', figsize=(15, 9), title = f'{dataset} eval')
 eval_fig.figure.savefig(f'{path}/eval.png')
 
 
