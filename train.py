@@ -3,6 +3,7 @@ import argparse
 parser = argparse.ArgumentParser(description="Train")
 parser.add_argument("dataset", type=str)
 parser.add_argument("epochs", type=int)
+parser.add_argument("max_len", type=int, default=128)
 args = parser.parse_args()
 
 
@@ -31,12 +32,52 @@ with open('wandb.key', 'r') as keyFile:
     WANDB_API_KEY = keyFile.readline().rstrip()
 wandb.login(key=WANDB_API_KEY)
 
-modelCheckpoint = "microsoft/BiomedNLP-BiomedBERT-base-uncased-abstract-fulltext"
+
+
+modelCheckpoint = "microsoft/BiomedNLP-BiomedBERT-base-uncased-abstract"
 dataset = args.dataset
 path = f"./_{dataset}"
+
+
+# # 1: Define objective/training function
+# def objective(config):
+#     score = config.x**3 + config.y
+#     return score
+
+# def main():
+#     wandb.init(project=f"biomed-{dataset}")
+#     score = objective(wandb.config)
+#     wandb.log({"score": score})
+
+# # 2: Define the search space
+# sweep_configuration = {
+#     "method": "random",
+#     "metric": {"goal": "maximize", "name": "score"},
+#     "parameters": {
+#         "x": {"max": 0.1, "min": 0.01},
+#         "y": {"values": [1, 3, 7]},
+#     },
+# }
+
+# # 3: Start the sweep
+# sweep_id = wandb.sweep(sweep=sweep_configuration, project="my-first-sweep")
+
+# wandb.agent(sweep_id, function=main, count=10)
+
+
+
+
+
+
+
+
+
 tokenizer = AutoTokenizer.from_pretrained(modelCheckpoint)
 data_collator = DataCollatorForTokenClassification(tokenizer=tokenizer)
 seqeval = evaluate.load("seqeval")
+
+
+
 
 training_args = TrainingArguments(
     output_dir=path,
@@ -61,17 +102,31 @@ training_args = TrainingArguments(
 def convertToCorpus(inputString):
     documents = []
     document = None
+    subdoc=0
     for line in inputString:
         if line.startswith("#"):
+            subdoc = 0
+            doc_id = line
             if document:
                 documents.append(document)
             document = {}
-            document["id"] = line
+            document["id"] = doc_id
             document["tokens"] = []
             document["str_tags"] = []
         else:
             iob = line.rsplit(",", 1)
             if len(iob) == 2:
+                if iob[0] in ".!?" and len(document['tokens'])>args.max_len:
+                    document["tokens"].append(iob[0])
+                    document["str_tags"].append(iob[1])
+                    documents.append(document)
+                    subdoc+=1
+                    document = {}
+                    document["id"] = f"{doc_id}-{subdoc}"
+                    document["tokens"] = []
+                    document["str_tags"] = []
+                    continue
+
                 document["tokens"].append(iob[0])
                 document["str_tags"].append(iob[1])
             else:
@@ -100,6 +155,7 @@ testFile = f.text.split("\n")
 testFile.pop(0) #Remove first element
 testCorpus = convertToCorpus(testFile)
 del(testFile, trainFile)
+
 
 label_list = sorted(list(
     set(list(itertools.chain(*list(map(lambda x: x["str_tags"], trainCorpus)))))))
