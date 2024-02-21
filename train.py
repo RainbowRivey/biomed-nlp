@@ -3,7 +3,7 @@ import argparse
 parser = argparse.ArgumentParser(description="Train")
 parser.add_argument("dataset", type=str)
 parser.add_argument("epochs", type=int)
-parser.add_argument("max_len", type=int, default=128)
+parser.add_argument("max_len", type=int, default=500)
 args = parser.parse_args()
 
 
@@ -32,8 +32,6 @@ with open('wandb.key', 'r') as keyFile:
     WANDB_API_KEY = keyFile.readline().rstrip()
 wandb.login(key=WANDB_API_KEY)
 
-
-
 modelCheckpoint = "microsoft/BiomedNLP-BiomedBERT-base-uncased-abstract"
 dataset = args.dataset
 path = f"./_{dataset}"
@@ -41,75 +39,41 @@ tokenizer = AutoTokenizer.from_pretrained(modelCheckpoint)
 data_collator = DataCollatorForTokenClassification(tokenizer=tokenizer)
 seqeval = evaluate.load("seqeval")
 
-
-
-
-training_args = TrainingArguments(
-    output_dir=path,
-    learning_rate=2e-5,
-    per_device_train_batch_size=16,
-    per_device_eval_batch_size=16,
-    num_train_epochs=args.epochs,
-    weight_decay=0.01,
-    save_total_limit=3,
-    evaluation_strategy="epoch",
-    save_strategy="epoch",
-    load_best_model_at_end=True,
-    push_to_hub=False,
-    optim="adamw_torch"
-)
-
-
-######################################
-#  Read IOB
-
-
 def convertToCorpus(inputString):
-    documents = []
-    document = None
-    subdoc=0
-    for line in inputString:
-        if line.startswith("#"):
-            subdoc = 0
-            doc_id = line
-            if document:
-                documents.append(document)
-            document = {}
-            document["id"] = doc_id
-            document["tokens"] = []
-            document["str_tags"] = []
-        else:
-            iob = line.rsplit(",", 1)
-            if len(iob) == 2:
-                if iob[0] in ".!?" and len(document['tokens'])>args.max_len:
+        documents = []
+        document = None
+        subdoc=0
+        for line in inputString:
+            if line.startswith("#"):
+                subdoc = 0
+                doc_id = line
+                if document:
+                    documents.append(document)
+                document = {}
+                document["id"] = doc_id
+                document["tokens"] = []
+                document["str_tags"] = []
+            else:
+                iob = line.rsplit(",", 1)
+                if len(iob) == 2:
+                    if iob[0] in ".!?" and len(document['tokens'])>args.max_len:
+                        document["tokens"].append(iob[0])
+                        document["str_tags"].append(iob[1])
+                        documents.append(document)
+                        subdoc+=1
+                        document = {}
+                        document["id"] = f"{doc_id}-{subdoc}"
+                        document["tokens"] = []
+                        document["str_tags"] = []
+                        continue
+
                     document["tokens"].append(iob[0])
                     document["str_tags"].append(iob[1])
-                    documents.append(document)
-                    subdoc+=1
-                    document = {}
-                    document["id"] = f"{doc_id}-{subdoc}"
-                    document["tokens"] = []
-                    document["str_tags"] = []
-                    continue
+                else:
+                    print(line)
+        return documents
 
-                document["tokens"].append(iob[0])
-                document["str_tags"].append(iob[1])
-            else:
-                print(line)
-    return documents
-
-
-print("Loading datasets")
-# for local copies
-# with open(f"./IOB/{dataset}-train.iob", "r") as train:
-#     trainFile = train.read().split('\n')
-#     trainFile.pop(0)
-#     trainCorpus = convertToCorpus(trainFile)
-# with open(f"./IOB/{dataset}-test.iob", "r") as test:
-#     testFile = test.read().split('\n')
-#     testFile.pop(0)
-#     testCorpus = convertToCorpus(testFile)
-
+#### Load datasets
 import requests
 f = requests.get(f"https://raw.githubusercontent.com/Erechtheus/mutationCorpora/master/corpora/IOB/{dataset}-train.iob")
 trainFile = f.text.split("\n")
@@ -126,30 +90,6 @@ label_list = sorted(list(
     set(list(itertools.chain(*list(map(lambda x: x["str_tags"], trainCorpus)))))))
 label2id = dict(zip(label_list, range(len(label_list))))
 id2label = {v: k for k, v in label2id.items()}
-
-
-def align_labels_with_tokens(labels, word_ids, id2label=id2label, label2id=label2id):
-    new_labels = []
-    current_word = None
-    for word_id in word_ids:
-        if word_id != current_word:
-            # Start of a new word!
-            current_word = word_id
-            label = -100 if word_id is None else labels[word_id]
-            new_labels.append(label)
-        elif word_id is None:
-            # Special token
-            new_labels.append(-100)
-        else:
-            # Same word as previous token
-            label = labels[word_id]
-            # If the label is B-XXX we change it to I-XXX
-            if (id2label[label].startswith("B-")):
-                label = label2id[id2label[label].replace("B-", "I-")]
-            new_labels.append(label)
-
-    return new_labels
-
 
 def tokenize_and_align_labels(examples):
     tokenized_inputs = tokenizer(
@@ -187,6 +127,34 @@ def compute_metrics(p):
         "accuracy": results["overall_accuracy"],
     }
 
+def align_labels_with_tokens(labels, word_ids, id2label=id2label, label2id=label2id):
+        new_labels = []
+        current_word = None
+        for word_id in word_ids:
+            if word_id != current_word:
+                # Start of a new word!
+                current_word = word_id
+                label = -100 if word_id is None else labels[word_id]
+                new_labels.append(label)
+            elif word_id is None:
+                # Special token
+                new_labels.append(-100)
+            else:
+                # Same word as previous token
+                label = labels[word_id]
+                # If the label is B-XXX we change it to I-XXX
+                if (id2label[label].startswith("B-")):
+                    label = label2id[id2label[label].replace("B-", "I-")]
+                new_labels.append(label)
+
+        return new_labels
+
+
+
+    
+
+
+
 
 for document in trainCorpus:
     document["ner_tags"] = list(
@@ -207,9 +175,22 @@ tokenized_datasets = fullData.map(
     tokenize_and_align_labels,
     batched=True
 )
-def train():
-    # Load clear model
-    print("Loading base model")
+
+def train(config):
+    training_args = TrainingArguments(
+        output_dir=path,
+        learning_rate= config.learning_rate, #2e-5,
+        per_device_train_batch_size=16,
+        per_device_eval_batch_size=16,
+        num_train_epochs=config.num_epochs,
+        weight_decay=config.weight_decay, #0.01,
+        save_total_limit=3,
+        evaluation_strategy="epoch",
+        save_strategy="epoch",
+        load_best_model_at_end=True,
+        push_to_hub=False,
+        optim="adamw_torch"
+    )
     model = AutoModelForTokenClassification.from_pretrained(
         modelCheckpoint, num_labels=len(id2label), id2label=id2label, label2id=label2id, ignore_mismatched_sizes=True)
     # OR load from checkpoint
@@ -268,6 +249,10 @@ def train():
     with open(f"{path}/perfomance.json", "w") as f:
         json.dump(results, f, cls=NumpyEncoder)
     return results
+
+
+
+
 # 1: Define objective/training function
 def objective(config):
     score = config.x**3 + config.y
@@ -281,14 +266,16 @@ def main():
 # 2: Define the search space
 sweep_configuration = {
     "method": "random",
-    "metric": {"goal": "minimize", "name": "loss"},
+    "metric": {"goal": "minimize", "name": "eval/f1"},
     "parameters": {
-        "x": {"max": 0.1, "min": 0.01},
-        "y": {"values": [1, 3, 7]},
+        # "doc_len" : {"max": 512, "min": 100},
+        "learning_rate" : {"max":2e-1, "min":2e-7},
+        "num_epochs" : {"max":10,"min":1},
+        "weight_decay": {"values":[0, 0.1, 0.01, 0.001]},
     },
 }
 
 # 3: Start the sweep
-sweep_id = wandb.sweep(sweep=sweep_configuration, project="s")
+sweep_id = wandb.sweep(sweep=sweep_configuration, project=f"biomed-{dataset}")
 
 wandb.agent(sweep_id, function=main, count=10)
