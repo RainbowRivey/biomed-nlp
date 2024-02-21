@@ -2,8 +2,7 @@ import argparse
 
 parser = argparse.ArgumentParser(description="Train")
 parser.add_argument("dataset", type=str)
-parser.add_argument("epochs", type=int)
-parser.add_argument("max_len", type=int, default=500)
+parser.add_argument("sweeps", type=int, default="5")
 args = parser.parse_args()
 
 
@@ -56,7 +55,7 @@ def convertToCorpus(inputString):
             else:
                 iob = line.rsplit(",", 1)
                 if len(iob) == 2:
-                    if iob[0] in ".!?" and len(document['tokens'])>args.max_len:
+                    if iob[0] in ".!?" and len(document['tokens'])>200:
                         document["tokens"].append(iob[0])
                         document["str_tags"].append(iob[1])
                         documents.append(document)
@@ -120,12 +119,7 @@ def compute_metrics(p):
 
     results = seqeval.compute(
         predictions=true_predictions, references=true_labels)
-    return {
-        "precision": results["overall_precision"],
-        "recall": results["overall_recall"],
-        "f1": results["overall_f1"],
-        "accuracy": results["overall_accuracy"],
-    }
+    return results
 
 def align_labels_with_tokens(labels, word_ids, id2label=id2label, label2id=label2id):
         new_labels = []
@@ -230,22 +224,22 @@ def train(config):
     eval_fig.figure.savefig(f'{path}/eval.png')
 
 
-    predictions, labels, _ = trainer.predict(tokenized_datasets["test"])
-    predictions = np.argmax(predictions, axis=2)
+    # predictions, labels, _ = trainer.predict(tokenized_datasets["test"])
+    # predictions = np.argmax(predictions, axis=2)
 
-    # Remove ignored index (special tokens)
-    true_predictions = [
-        [label_list[p] for (p, l) in zip(prediction, label) if l != -100]
-        for prediction, label in zip(predictions, labels)
-    ]
-    true_labels = [
-        [label_list[l] for (p, l) in zip(prediction, label) if l != -100]
-        for prediction, label in zip(predictions, labels)
-    ]
+    # # Remove ignored index (special tokens)
+    # true_predictions = [
+    #     [label_list[p] for (p, l) in zip(prediction, label) if l != -100]
+    #     for prediction, label in zip(predictions, labels)
+    # ]
+    # true_labels = [
+    #     [label_list[l] for (p, l) in zip(prediction, label) if l != -100]
+    #     for prediction, label in zip(predictions, labels)
+    # ]
 
-    results = seqeval.compute(predictions=true_predictions, references=true_labels)
-    results
-
+    # results = seqeval.compute(predictions=true_predictions, references=true_labels)
+    # results
+    results = compute_metrics(trainer.predict(tokenized_datasets["test"]))
     with open(f"{path}/perfomance.json", "w") as f:
         json.dump(results, f, cls=NumpyEncoder)
     return results
@@ -269,9 +263,9 @@ sweep_configuration = {
     "metric": {"goal": "minimize", "name": "eval/f1"},
     "parameters": {
         # "doc_len" : {"max": 512, "min": 100},
-        "learning_rate" : {"max":2e-1, "min":2e-7},
-        "num_epochs" : {"max":10,"min":1},
-        "weight_decay": {"values":[0, 0.1, 0.01, 0.001]},
+        "learning_rate" : {"max":2e-4, "min":2e-6},
+        "num_epochs" : {"values": [5]},
+        "weight_decay": {"values":[0, 0.1, 0.01]},
     },
 }
 
