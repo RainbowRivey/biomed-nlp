@@ -272,4 +272,4 @@ sweep_configuration = {
 # 3: Start the sweep
 sweep_id = wandb.sweep(sweep=sweep_configuration, project=f"biomed-{dataset}")
 
-wandb.agent(sweep_id, function=main, count=10)
+wandb.agent(sweep_id, function=main, count=args.sweeps)
