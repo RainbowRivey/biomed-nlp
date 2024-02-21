@@ -224,22 +224,9 @@ def train(config):
     eval_fig.figure.savefig(f'{path}/eval.png')
 
 
-    # predictions, labels, _ = trainer.predict(tokenized_datasets["test"])
-    # predictions = np.argmax(predictions, axis=2)
-
-    # # Remove ignored index (special tokens)
-    # true_predictions = [
-    #     [label_list[p] for (p, l) in zip(prediction, label) if l != -100]
-    #     for prediction, label in zip(predictions, labels)
-    # ]
-    # true_labels = [
-    #     [label_list[l] for (p, l) in zip(prediction, label) if l != -100]
-    #     for prediction, label in zip(predictions, labels)
-    # ]
-
-    # results = seqeval.compute(predictions=true_predictions, references=true_labels)
-    # results
-    results = compute_metrics(trainer.predict(tokenized_datasets["test"]))
+    predictions, labels, _ = trainer.predict(tokenized_datasets["test"])
+    
+    results = compute_metrics((predictions, labels))
     with open(f"{path}/perfomance.json", "w") as f:
         json.dump(results, f, cls=NumpyEncoder)
     return results
@@ -247,15 +234,11 @@ def train(config):
 
 
 
-# 1: Define objective/training function
-def objective(config):
-    score = config.x**3 + config.y
-    return score
 
 def main():
     wandb.init(project=f"biomed-{dataset}")
     score = train(wandb.config)
-    wandb.log({"score": score})
+    wandb.log({"score": score["overall_f1"]})
 
 # 2: Define the search space
 sweep_configuration = {
