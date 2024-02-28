@@ -248,11 +248,11 @@ sweep_configuration = {
         # "doc_len" : {"max": 512, "min": 100},
         "learning_rate" : {"max":2e-4, "min":2e-6},
         "num_epochs" : {"values": [5]},
-        "weight_decay": {"values":[0, 0.1, 0.01]},
+        "weight_decay": {"values":[0.01]},
     },
 }
 
 # 3: Start the sweep
-sweep_id = wandb.sweep(sweep=sweep_configuration, project=f"biomed-{dataset}")
+sweep_id = wandb.sweep(sweep=sweep_configuration, project=f"biomed-{dataset}-biobert")
 
 wandb.agent(sweep_id, function=main, count=args.sweeps)
