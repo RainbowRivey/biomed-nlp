@@ -30,10 +30,10 @@ import wandb
 with open('wandb.key', 'r') as keyFile:
     WANDB_API_KEY = keyFile.readline().rstrip()
 wandb.login(key=WANDB_API_KEY)
-models = {"ms/biomedBert-abstract-full": "microsoft/BiomedNLP-BiomedBERT-base-uncased-abstract-fulltext", "ms/biomedBert-abstract": "microsoft/BiomedNLP-BiomedBERT-base-uncased-abstract", "dmis/biobert":"dmis-lab/biobert-v1.1"}
-modelCheckpoint = models["dmis/biobert"]
+models = {"biomedbert-full": "microsoft/BiomedNLP-BiomedBERT-base-uncased-abstract-fulltext", "biomedbert-abstract": "microsoft/BiomedNLP-BiomedBERT-base-uncased-abstract", "biobert":"dmis-lab/biobert-v1.1", "pubmedbert": "cambridgeltl/SapBERT-from-PubMedBERT-fulltext"}
+modelCheckpoint = models["pubmedbert"]
 dataset = args.dataset
-path = f"./_{dataset}-biobert"
+path = f"./_{dataset}-pubmedbert"
 tokenizer = AutoTokenizer.from_pretrained(modelCheckpoint)
 data_collator = DataCollatorForTokenClassification(tokenizer=tokenizer)
 seqeval = evaluate.load("seqeval")
@@ -215,13 +215,13 @@ def train(config):
     df = pd.DataFrame(trainer.state.log_history)
     df.to_json(f"{path}/log_history.json")
 
-    df = df[df.eval_runtime.notnull()]
-    loss_fig = df.plot(x='epoch', y=['eval_loss'], kind='bar', title = f'{dataset} loss')
-    loss_fig.figure.savefig(f'{path}/loss.png')
+    # df = df[df.eval_runtime.notnull()]
+    # loss_fig = df.plot(x='epoch', y=['eval_loss'], kind='bar', title = f'{dataset} loss')
+    # loss_fig.figure.savefig(f'{path}/loss.png')
 
-    eval_fig = df.plot(x='epoch', y=['eval_precision', 'eval_recall',
-                                    'eval_f1'], kind='bar', figsize=(15, 9), title = f'{dataset} eval')
-    eval_fig.figure.savefig(f'{path}/eval.png')
+    # eval_fig = df.plot(x='epoch', y=['eval_precision', 'eval_recall',
+    #                                 'eval_f1'], kind='bar', figsize=(15, 9), title = f'{dataset} eval')
+    # eval_fig.figure.savefig(f'{path}/eval.png')
 
 
     predictions, labels, _ = trainer.predict(tokenized_datasets["test"])
@@ -253,6 +253,6 @@ sweep_configuration = {
 }
 
 # 3: Start the sweep
-sweep_id = wandb.sweep(sweep=sweep_configuration, project=f"biomed-{dataset}-biobert")
+sweep_id = wandb.sweep(sweep=sweep_configuration, project=f"biomed-{dataset}-pubmedbert")
 
 wandb.agent(sweep_id, function=main, count=args.sweeps)
