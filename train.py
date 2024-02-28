@@ -30,10 +30,10 @@ import wandb
 with open('wandb.key', 'r') as keyFile:
     WANDB_API_KEY = keyFile.readline().rstrip()
 wandb.login(key=WANDB_API_KEY)
-
-modelCheckpoint = "microsoft/BiomedNLP-BiomedBERT-base-uncased-abstract"
+models = {"ms/biomedBert-abstract-full": "microsoft/BiomedNLP-BiomedBERT-base-uncased-abstract-fulltext", "ms/biomedBert-abstract": "microsoft/BiomedNLP-BiomedBERT-base-uncased-abstract", "dmis/biobert":"dmis-lab/biobert-v1.1"}
+modelCheckpoint = models["dmis/biobert"]
 dataset = args.dataset
-path = f"./_{dataset}"
+path = f"./_{dataset}-biobert"
 tokenizer = AutoTokenizer.from_pretrained(modelCheckpoint)
 data_collator = DataCollatorForTokenClassification(tokenizer=tokenizer)
 seqeval = evaluate.load("seqeval")
