@@ -246,7 +246,9 @@ sweep_configuration = {
     "metric": {"goal": "maximize", "name": "eval/overall_f1"},
     "parameters": {
         "learning_rate" : {"max":0.1, "min":2e-5},
-        "model" : {"values":["biomedbert-full", "biomedbert-abstract", "biobert", "pubmedbert", "biomed-ner-all"]}
+        "weight_decay" : {"max:":0.1, "min":0.0001},
+        "model" : {"values":["biomedbert-full", "biomedbert-abstract", "biobert", "pubmedbert", "biomed-ner-all"]},
+        "num_epochs":{"values":[5]}
     },
 }
 
