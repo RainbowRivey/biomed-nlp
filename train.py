@@ -30,147 +30,147 @@ import wandb
 with open('wandb.key', 'r') as keyFile:
     WANDB_API_KEY = keyFile.readline().rstrip()
 wandb.login(key=WANDB_API_KEY)
-models = {"biomedbert-full": "microsoft/BiomedNLP-BiomedBERT-base-uncased-abstract-fulltext", "biomedbert-abstract": "microsoft/BiomedNLP-BiomedBERT-base-uncased-abstract", "biobert":"dmis-lab/biobert-v1.1", "pubmedbert": "cambridgeltl/SapBERT-from-PubMedBERT-fulltext"}
-modelCheckpoint = models["pubmedbert"]
+models = {"biomedbert-full": "microsoft/BiomedNLP-BiomedBERT-base-uncased-abstract-fulltext", "biomedbert-abstract": "microsoft/BiomedNLP-BiomedBERT-base-uncased-abstract", "biobert":"dmis-lab/biobert-v1.1", "pubmedbert": "cambridgeltl/SapBERT-from-PubMedBERT-fulltext", "biomed-ner-all":"d4data/biomedical-ner-all"}
 dataset = args.dataset
-path = f"./_{dataset}-pubmedbert"
-tokenizer = AutoTokenizer.from_pretrained(modelCheckpoint)
-data_collator = DataCollatorForTokenClassification(tokenizer=tokenizer)
-seqeval = evaluate.load("seqeval")
+def train(config):
+    modelCheckpoint = models[config.model]
+    path = f"./_{dataset}-{config.model}"
+    tokenizer = AutoTokenizer.from_pretrained(modelCheckpoint)
+    data_collator = DataCollatorForTokenClassification(tokenizer=tokenizer)
+    seqeval = evaluate.load("seqeval")
 
-def convertToCorpus(inputString):
-        documents = []
-        document = None
-        subdoc=0
-        for line in inputString:
-            if line.startswith("#"):
-                subdoc = 0
-                doc_id = line
-                if document:
-                    documents.append(document)
-                document = {}
-                document["id"] = doc_id
-                document["tokens"] = []
-                document["str_tags"] = []
-            else:
-                iob = line.rsplit(",", 1)
-                if len(iob) == 2:
-                    if iob[0] in ".!?" and len(document['tokens'])>200:
+    def convertToCorpus(inputString):
+            documents = []
+            document = None
+            subdoc=0
+            for line in inputString:
+                if line.startswith("#"):
+                    subdoc = 0
+                    doc_id = line
+                    if document:
+                        documents.append(document)
+                    document = {}
+                    document["id"] = doc_id
+                    document["tokens"] = []
+                    document["str_tags"] = []
+                else:
+                    iob = line.rsplit(",", 1)
+                    if len(iob) == 2:
+                        if iob[0] in ".!?" and len(document['tokens'])>200:
+                            document["tokens"].append(iob[0])
+                            document["str_tags"].append(iob[1])
+                            documents.append(document)
+                            subdoc+=1
+                            document = {}
+                            document["id"] = f"{doc_id}-{subdoc}"
+                            document["tokens"] = []
+                            document["str_tags"] = []
+                            continue
+
                         document["tokens"].append(iob[0])
                         document["str_tags"].append(iob[1])
-                        documents.append(document)
-                        subdoc+=1
-                        document = {}
-                        document["id"] = f"{doc_id}-{subdoc}"
-                        document["tokens"] = []
-                        document["str_tags"] = []
-                        continue
+                    else:
+                        print(line)
+            return documents
 
-                    document["tokens"].append(iob[0])
-                    document["str_tags"].append(iob[1])
-                else:
-                    print(line)
-        return documents
-
-#### Load datasets
-import requests
-f = requests.get(f"https://raw.githubusercontent.com/Erechtheus/mutationCorpora/master/corpora/IOB/{dataset}-train.iob")
-trainFile = f.text.split("\n")
-trainFile.pop(0) #Remove first element
-trainCorpus = convertToCorpus(trainFile)
-f = requests.get(f"https://raw.githubusercontent.com/Erechtheus/mutationCorpora/master/corpora/IOB/{dataset}-test.iob")
-testFile = f.text.split("\n")
-testFile.pop(0) #Remove first element
-testCorpus = convertToCorpus(testFile)
-del(testFile, trainFile)
+    #### Load datasets
+    import requests
+    f = requests.get(f"https://raw.githubusercontent.com/Erechtheus/mutationCorpora/master/corpora/IOB/{dataset}-train.iob")
+    trainFile = f.text.split("\n")
+    trainFile.pop(0) #Remove first element
+    trainCorpus = convertToCorpus(trainFile)
+    f = requests.get(f"https://raw.githubusercontent.com/Erechtheus/mutationCorpora/master/corpora/IOB/{dataset}-test.iob")
+    testFile = f.text.split("\n")
+    testFile.pop(0) #Remove first element
+    testCorpus = convertToCorpus(testFile)
+    del(testFile, trainFile)
 
 
-label_list = sorted(list(
-    set(list(itertools.chain(*list(map(lambda x: x["str_tags"], trainCorpus)))))))
-label2id = dict(zip(label_list, range(len(label_list))))
-id2label = {v: k for k, v in label2id.items()}
+    label_list = sorted(list(
+        set(list(itertools.chain(*list(map(lambda x: x["str_tags"], trainCorpus)))))))
+    label2id = dict(zip(label_list, range(len(label_list))))
+    id2label = {v: k for k, v in label2id.items()}
 
-def tokenize_and_align_labels(examples):
-    tokenized_inputs = tokenizer(
-        examples["tokens"], truncation=True, is_split_into_words=True, max_length=512
-    )
-    all_labels = examples["ner_tags"]
-    new_labels = []
-    for i, labels in enumerate(all_labels):
-        word_ids = tokenized_inputs.word_ids(i)
-        new_labels.append(align_labels_with_tokens(labels, word_ids))
-
-    tokenized_inputs["labels"] = new_labels
-    return tokenized_inputs
-
-
-def compute_metrics(p):
-    predictions, labels = p
-    predictions = np.argmax(predictions, axis=2)
-
-    true_predictions = [
-        [label_list[p] for (p, l) in zip(prediction, label) if l != -100]
-        for prediction, label in zip(predictions, labels)
-    ]
-    true_labels = [
-        [label_list[l] for (p, l) in zip(prediction, label) if l != -100]
-        for prediction, label in zip(predictions, labels)
-    ]
-
-    results = seqeval.compute(
-        predictions=true_predictions, references=true_labels)
-    return results
-
-def align_labels_with_tokens(labels, word_ids, id2label=id2label, label2id=label2id):
+    def tokenize_and_align_labels(examples):
+        tokenized_inputs = tokenizer(
+            examples["tokens"], truncation=True, is_split_into_words=True, max_length=512
+        )
+        all_labels = examples["ner_tags"]
         new_labels = []
-        current_word = None
-        for word_id in word_ids:
-            if word_id != current_word:
-                # Start of a new word!
-                current_word = word_id
-                label = -100 if word_id is None else labels[word_id]
-                new_labels.append(label)
-            elif word_id is None:
-                # Special token
-                new_labels.append(-100)
-            else:
-                # Same word as previous token
-                label = labels[word_id]
-                # If the label is B-XXX we change it to I-XXX
-                if (id2label[label].startswith("B-")):
-                    label = label2id[id2label[label].replace("B-", "I-")]
-                new_labels.append(label)
+        for i, labels in enumerate(all_labels):
+            word_ids = tokenized_inputs.word_ids(i)
+            new_labels.append(align_labels_with_tokens(labels, word_ids))
 
-        return new_labels
+        tokenized_inputs["labels"] = new_labels
+        return tokenized_inputs
 
 
+    def compute_metrics(p):
+        predictions, labels = p
+        predictions = np.argmax(predictions, axis=2)
 
-    
+        true_predictions = [
+            [label_list[p] for (p, l) in zip(prediction, label) if l != -100]
+            for prediction, label in zip(predictions, labels)
+        ]
+        true_labels = [
+            [label_list[l] for (p, l) in zip(prediction, label) if l != -100]
+            for prediction, label in zip(predictions, labels)
+        ]
+
+        results = seqeval.compute(
+            predictions=true_predictions, references=true_labels)
+        return results
+
+    def align_labels_with_tokens(labels, word_ids, id2label=id2label, label2id=label2id):
+            new_labels = []
+            current_word = None
+            for word_id in word_ids:
+                if word_id != current_word:
+                    # Start of a new word!
+                    current_word = word_id
+                    label = -100 if word_id is None else labels[word_id]
+                    new_labels.append(label)
+                elif word_id is None:
+                    # Special token
+                    new_labels.append(-100)
+                else:
+                    # Same word as previous token
+                    label = labels[word_id]
+                    # If the label is B-XXX we change it to I-XXX
+                    if (id2label[label].startswith("B-")):
+                        label = label2id[id2label[label].replace("B-", "I-")]
+                    new_labels.append(label)
+
+            return new_labels
+
+
+
+        
 
 
 
 
-for document in trainCorpus:
-    document["ner_tags"] = list(
-        map(lambda x: label2id[x], document["str_tags"]))
+    for document in trainCorpus:
+        document["ner_tags"] = list(
+            map(lambda x: label2id[x], document["str_tags"]))
 
-for document in testCorpus:
-    document["ner_tags"] = list(
-        map(lambda x: label2id[x], document["str_tags"]))
+    for document in testCorpus:
+        document["ner_tags"] = list(
+            map(lambda x: label2id[x], document["str_tags"]))
 
-fullData = DatasetDict({
-    'train': Dataset.from_pandas(pd.DataFrame(data=trainCorpus)),
-    'test': Dataset.from_pandas(pd.DataFrame(data=testCorpus))
-})
+    fullData = DatasetDict({
+        'train': Dataset.from_pandas(pd.DataFrame(data=trainCorpus)),
+        'test': Dataset.from_pandas(pd.DataFrame(data=testCorpus))
+    })
 
 
-#
-tokenized_datasets = fullData.map(
-    tokenize_and_align_labels,
-    batched=True
-)
+    #
+    tokenized_datasets = fullData.map(
+        tokenize_and_align_labels,
+        batched=True
+    )
 
-def train(config):
     training_args = TrainingArguments(
         output_dir=path,
         learning_rate= config.learning_rate, #2e-5,
@@ -243,16 +243,14 @@ def main():
 # 2: Define the search space
 sweep_configuration = {
     "method": "random",
-    "metric": {"goal": "minimize", "name": "eval/f1"},
+    "metric": {"goal": "maximize", "name": "eval/overall_f1"},
     "parameters": {
-        # "doc_len" : {"max": 512, "min": 100},
-        "learning_rate" : {"max":2e-4, "min":2e-6},
-        "num_epochs" : {"values": [5]},
-        "weight_decay": {"values":[0.01]},
+        "learning_rate" : {"max":0.1, "min":2e-5},
+        "model" : {"values":["biomedbert-full", "biomedbert-abstract", "biobert", "pubmedbert", "biomed-ner-all"]}
     },
 }
 
 # 3: Start the sweep
-sweep_id = wandb.sweep(sweep=sweep_configuration, project=f"biomed-{dataset}-pubmedbert")
+sweep_id = wandb.sweep(sweep=sweep_configuration, project=f"biomed-{dataset}-all")
 
 wandb.agent(sweep_id, function=main, count=args.sweeps)
