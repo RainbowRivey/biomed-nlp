@@ -247,7 +247,7 @@ def train(config):
 
     with open(f"{path}/perfomance.json", "w") as f:
         json.dump(results, f, cls=NumpyEncoder)
-    return results
+    return results["overall_f1"]
 
 
 
@@ -256,7 +256,7 @@ def train(config):
 def main():
     wandb.init(project=f"biomed-{dataset}")
     score = train(wandb.config)
-    wandb.log({"score": score["overall_f1"]})
+    wandb.log({"score": score})
 
 # 2: Define the search space
 sweep_configuration = {
@@ -265,7 +265,8 @@ sweep_configuration = {
     "parameters": {
         "learning_rate" : {"max":2e-3, "min":2e-6},
         # "weight_decay" : {"max":0.1, "min":0.0001},
-        "model" : {"values":["biomedbert-full", "biomedbert-abstract", "biobert", "pubmedbert"]},
+        # "model" : {"values":["biomedbert-full", "biomedbert-abstract", "biobert", "pubmedbert"]},
+        "model" : {"values":["biomedbert-abstract"]},
         # "num_epochs":{"values":[5]}
     },
 }
