@@ -131,7 +131,7 @@ def train(config):
         metric = evaluate.load("seqeval")
         results = metric.compute(
             predictions=true_predictions, references=true_labels)
-        return results
+        return {a:b for a,b in results.items() if a in ["accuracy", "precision", "recall", "f1"]}
 
     def align_labels_with_tokens(labels, word_ids, id2label=id2label, label2id=label2id):
             new_labels = []
@@ -191,10 +191,7 @@ def train(config):
     )
     model = AutoModelForTokenClassification.from_pretrained(
         modelCheckpoint, num_labels=len(id2label), id2label=id2label, label2id=label2id, ignore_mismatched_sizes=True)
-    # OR load from checkpoint
-    # model = AutoModelForTokenClassification.from_pretrained(
-    #     outputModel, num_labels=len(id2label), id2label=id2label, label2id=label2id)
-    #  TRAIN
+    
 
     trainer = Trainer(
         model=model,
@@ -251,7 +248,7 @@ sweep_configuration = {
     "parameters": {
         "learning_rate" : {"max":0.1, "min":2e-5},
         "weight_decay" : {"max":0.1, "min":0.0001},
-        "model" : {"values":["biomedbert-full", "biomedbert-abstract", "biobert", "pubmedbert", "biomed-ner-all"]},
+        "model" : {"values":["biomedbert-full", "biomedbert-abstract", "biobert", "pubmedbert"]},
         "num_epochs":{"values":[5]}
     },
 }
