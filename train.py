@@ -32,64 +32,75 @@ with open('wandb.key', 'r') as keyFile:
 wandb.login(key=WANDB_API_KEY)
 models = {"biomedbert-full": "microsoft/BiomedNLP-BiomedBERT-base-uncased-abstract-fulltext", "biomedbert-abstract": "microsoft/BiomedNLP-BiomedBERT-base-uncased-abstract", "biobert":"dmis-lab/biobert-v1.1", "pubmedbert": "cambridgeltl/SapBERT-from-PubMedBERT-fulltext", "biomed-ner-all":"d4data/biomedical-ner-all"}
 dataset = args.dataset
+#### Load datasets
+import requests
+
+def convertToCorpus(inputString):
+        documents = []
+        document = None
+        subdoc=0
+        for line in inputString:
+            if line.startswith("#"):
+                subdoc = 0
+                doc_id = line
+                if document:
+                    documents.append(document)
+                document = {}
+                document["id"] = doc_id
+                document["tokens"] = []
+                document["str_tags"] = []
+            else:
+                iob = line.rsplit(",", 1)
+                if len(iob) == 2:
+                    if iob[0] in ".!?" and len(document['tokens'])>200:
+                        document["tokens"].append(iob[0])
+                        document["str_tags"].append(iob[1])
+                        documents.append(document)
+                        subdoc+=1
+                        document = {}
+                        document["id"] = f"{doc_id}-{subdoc}"
+                        document["tokens"] = []
+                        document["str_tags"] = []
+                        continue
+
+                    document["tokens"].append(iob[0])
+                    document["str_tags"].append(iob[1])
+                else:
+                    print(line)
+        return documents
+
+f = requests.get(f"https://raw.githubusercontent.com/Erechtheus/mutationCorpora/master/corpora/IOB/{dataset}-train.iob")
+trainFile = f.text.split("\n")
+trainFile.pop(0) #Remove first element
+trainCorpus = convertToCorpus(trainFile)
+f = requests.get(f"https://raw.githubusercontent.com/Erechtheus/mutationCorpora/master/corpora/IOB/{dataset}-test.iob")
+testFile = f.text.split("\n")
+testFile.pop(0) #Remove first element
+testCorpus = convertToCorpus(testFile)
+del(testFile, trainFile)
+
+
+label_list = sorted(list(
+    set(list(itertools.chain(*list(map(lambda x: x["str_tags"], trainCorpus)))))))
+label2id = dict(zip(label_list, range(len(label_list))))
+id2label = {v: k for k, v in label2id.items()}
+
+
+for document in trainCorpus:
+    document["ner_tags"] = list(
+        map(lambda x: label2id[x], document["str_tags"]))
+
+for document in testCorpus:
+    document["ner_tags"] = list(
+        map(lambda x: label2id[x], document["str_tags"]))
+    
+
 def train(config):
     modelCheckpoint = models[config.model]
     path = f"./_{dataset}-{config.model}"
     tokenizer = AutoTokenizer.from_pretrained(modelCheckpoint)
     data_collator = DataCollatorForTokenClassification(tokenizer=tokenizer)
     seqeval = evaluate.load("seqeval")
-
-    def convertToCorpus(inputString):
-            documents = []
-            document = None
-            subdoc=0
-            for line in inputString:
-                if line.startswith("#"):
-                    subdoc = 0
-                    doc_id = line
-                    if document:
-                        documents.append(document)
-                    document = {}
-                    document["id"] = doc_id
-                    document["tokens"] = []
-                    document["str_tags"] = []
-                else:
-                    iob = line.rsplit(",", 1)
-                    if len(iob) == 2:
-                        if iob[0] in ".!?" and len(document['tokens'])>200:
-                            document["tokens"].append(iob[0])
-                            document["str_tags"].append(iob[1])
-                            documents.append(document)
-                            subdoc+=1
-                            document = {}
-                            document["id"] = f"{doc_id}-{subdoc}"
-                            document["tokens"] = []
-                            document["str_tags"] = []
-                            continue
-
-                        document["tokens"].append(iob[0])
-                        document["str_tags"].append(iob[1])
-                    else:
-                        print(line)
-            return documents
-
-    #### Load datasets
-    import requests
-    f = requests.get(f"https://raw.githubusercontent.com/Erechtheus/mutationCorpora/master/corpora/IOB/{dataset}-train.iob")
-    trainFile = f.text.split("\n")
-    trainFile.pop(0) #Remove first element
-    trainCorpus = convertToCorpus(trainFile)
-    f = requests.get(f"https://raw.githubusercontent.com/Erechtheus/mutationCorpora/master/corpora/IOB/{dataset}-test.iob")
-    testFile = f.text.split("\n")
-    testFile.pop(0) #Remove first element
-    testCorpus = convertToCorpus(testFile)
-    del(testFile, trainFile)
-
-
-    label_list = sorted(list(
-        set(list(itertools.chain(*list(map(lambda x: x["str_tags"], trainCorpus)))))))
-    label2id = dict(zip(label_list, range(len(label_list))))
-    id2label = {v: k for k, v in label2id.items()}
 
     def tokenize_and_align_labels(examples):
         tokenized_inputs = tokenizer(
@@ -117,8 +128,8 @@ def train(config):
             [label_list[l] for (p, l) in zip(prediction, label) if l != -100]
             for prediction, label in zip(predictions, labels)
         ]
-
-        results = seqeval.compute(
+        metric = evaluate.load("seqeval")
+        results = metric.compute(
             predictions=true_predictions, references=true_labels)
         return results
 
@@ -151,13 +162,6 @@ def train(config):
 
 
 
-    for document in trainCorpus:
-        document["ner_tags"] = list(
-            map(lambda x: label2id[x], document["str_tags"]))
-
-    for document in testCorpus:
-        document["ner_tags"] = list(
-            map(lambda x: label2id[x], document["str_tags"]))
 
     fullData = DatasetDict({
         'train': Dataset.from_pandas(pd.DataFrame(data=trainCorpus)),
