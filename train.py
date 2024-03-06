@@ -128,10 +128,15 @@ def train(config):
             [label_list[l] for (p, l) in zip(prediction, label) if l != -100]
             for prediction, label in zip(predictions, labels)
         ]
-        metric = evaluate.load("seqeval")
-        results = metric.compute(
+        results = seqeval.compute(
             predictions=true_predictions, references=true_labels)
-        return {a:b for a,b in results.items() if a in ["accuracy", "precision", "recall", "f1"]}
+        return {
+            "precision": results["overall_precision"],
+            "recall": results["overall_recall"],
+            "f1": results["overall_f1"],
+            "accuracy": results["overall_accuracy"],
+        }
+
 
     def align_labels_with_tokens(labels, word_ids, id2label=id2label, label2id=label2id):
             new_labels = []
@@ -226,8 +231,20 @@ def train(config):
 
 
     predictions, labels, _ = trainer.predict(tokenized_datasets["test"])
+    predictions = np.argmax(predictions, axis=2)
+
+    # Remove ignored index (special tokens)
+    true_predictions = [
+        [label_list[p] for (p, l) in zip(prediction, label) if l != -100]
+        for prediction, label in zip(predictions, labels)
+    ]
+    true_labels = [
+        [label_list[l] for (p, l) in zip(prediction, label) if l != -100]
+        for prediction, label in zip(predictions, labels)
+    ]
+
+    results = seqeval.compute(predictions=true_predictions, references=true_labels)
     
-    results = compute_metrics((predictions, labels))
     with open(f"{path}/perfomance.json", "w") as f:
         json.dump(results, f, cls=NumpyEncoder)
     return results
