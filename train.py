@@ -185,8 +185,8 @@ def train(config):
         learning_rate= config.learning_rate, #2e-5,
         per_device_train_batch_size=16,
         per_device_eval_batch_size=16,
-        num_train_epochs=config.num_epochs,
-        weight_decay=config.weight_decay, #0.01,
+        num_train_epochs=5,
+        weight_decay=0.01,
         save_total_limit=3,
         evaluation_strategy="epoch",
         save_strategy="epoch",
@@ -244,7 +244,7 @@ def train(config):
     ]
 
     results = seqeval.compute(predictions=true_predictions, references=true_labels)
-    
+
     with open(f"{path}/perfomance.json", "w") as f:
         json.dump(results, f, cls=NumpyEncoder)
     return results
@@ -263,10 +263,10 @@ sweep_configuration = {
     "method": "random",
     "metric": {"goal": "maximize", "name": "eval/overall_f1"},
     "parameters": {
-        "learning_rate" : {"max":0.1, "min":2e-5},
-        "weight_decay" : {"max":0.1, "min":0.0001},
+        "learning_rate" : {"max":2e-3, "min":2e-6},
+        # "weight_decay" : {"max":0.1, "min":0.0001},
         "model" : {"values":["biomedbert-full", "biomedbert-abstract", "biobert", "pubmedbert"]},
-        "num_epochs":{"values":[5]}
+        # "num_epochs":{"values":[5]}
     },
 }
 
